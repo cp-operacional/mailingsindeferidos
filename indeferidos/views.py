@@ -5,6 +5,9 @@ from django.db import transaction
 from .models import Indeferidos, IndeferidosDone
 from .serializers import IndeferidosSerializer
 from django.db.models import Q
+from openpyxl import Workbook
+from django.http import HttpResponse
+from io import BytesIO
 
 class IndeferidosListView(APIView):
     def post(self, request):
@@ -62,7 +65,25 @@ class IndeferidosListView(APIView):
 
             IndeferidosDone.objects.bulk_create(cpfs_para_inserir, ignore_conflicts=True)
 
-        return Response({
-            "total": len(resultado),
-            "data": resultado
-        })
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Indeferidos"
+
+        for col, campo in enumerate(campos, start=1):
+            ws.cell(row=1, column=col, value=campo)
+
+        for row, item in enumerate(resultado, start=2):
+            for col, campo in enumerate(campos, start=1):
+                ws.cell(row=row, column=col, value=item.get(campo, ''))
+
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        response = HttpResponse(
+            output.read(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = 'attachment; filename=indeferidos.xlsx'
+
+        return response
