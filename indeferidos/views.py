@@ -8,6 +8,7 @@ from django.db.models import Q
 from openpyxl import Workbook
 from django.http import HttpResponse
 from io import BytesIO
+from django.db.models import Count
 
 class IndeferidosListView(APIView):
     def post(self, request):
@@ -87,3 +88,53 @@ class IndeferidosListView(APIView):
         response['Content-Disposition'] = 'attachment; filename=indeferidos.xlsx'
 
         return response
+
+class IndeferidosCountView(APIView):
+    def post(self, request):
+        filtros = request.data.get('filtros', [])
+
+        queryset = Indeferidos.objects.none()
+        ufs_para_contar = set()
+        municipios_para_contar = set()
+
+        for filtro in filtros:
+            filtro_queryset = Indeferidos.objects.all()
+            for campo, valores in filtro.items():
+                if valores:
+                    if campo == 'competencia_indeferimento':
+                        if len(valores) == 1:
+                            filtro_queryset = filtro_queryset.filter(competencia_indeferimento=valores[0])
+                        elif len(valores) == 2:
+                            filtro_queryset = filtro_queryset.filter(competencia_indeferimento__range=(min(valores), max(valores)))
+                    elif campo == 'uf_municipio':
+                        q_objects = Q()
+                        for uf, municipios in valores.items():
+                            q_objects |= Q(uf=uf, municipio__in=municipios)
+                            municipios_para_contar.update(municipios)
+                        filtro_queryset = filtro_queryset.filter(q_objects)
+                    elif campo == 'uf':
+                        filtro_queryset = filtro_queryset.filter(uf__in=valores)
+                        ufs_para_contar.update(valores)
+                    else:
+                        filtro_queryset = filtro_queryset.filter(**{f"{campo}__in": valores})
+            queryset = queryset | filtro_queryset
+
+        total = queryset.count()
+        resultado = {
+            "count": {
+                "total": total
+            },
+            "query": request.data
+        }
+
+        if ufs_para_contar:
+            uf_counts = queryset.filter(uf__in=ufs_para_contar).values('uf').annotate(count=Count('uf'))
+            for item in uf_counts:
+                resultado["count"][item['uf']] = item['count']
+
+        if municipios_para_contar:
+            municipio_counts = queryset.filter(municipio__in=municipios_para_contar).values('municipio').annotate(count=Count('cpf'))
+            for item in municipio_counts:
+                resultado["count"][item['municipio']] = item['count']
+
+        return Response(resultado)
